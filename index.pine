@@ -1,0 +1,138 @@
+//@version=6
+strategy("Pivot Point Break & Retest Strategy", overlay=true, pyramiding=0, default_qty_type=strategy.cash, default_qty_value=10000, initial_capital=10000)
+
+// Inputs
+useDailyPivots = input(true, title="Use Daily Pivots (from previous day)")
+showLabels = input(true, title="Show Pivot Point Labels")
+riskRewardRatio = input.float(1.5, title="Risk:Reward Ratio", minval=0.1, maxval=10, step=0.1)
+
+// Calculate Pivot Points
+prevHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prevLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+prevClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+
+pivot = (prevHigh + prevLow + prevClose) / 3
+r1 = (2 * pivot) - prevLow
+s1 = (2 * pivot) - prevHigh
+r2 = pivot + (prevHigh - prevLow)
+s2 = pivot - (prevHigh - prevLow)
+r3 = pivot + 1.5 * (prevHigh - prevLow)
+s3 = pivot - 1.5 * (prevHigh - prevLow)
+
+// Plot Pivot Points
+plot(useDailyPivots ? pivot : na, title="Pivot", color=color.blue, linewidth=2)
+plot(useDailyPivots ? r1 : na, title="R1", color=color.green, linewidth=1)
+plot(useDailyPivots ? r2 : na, title="R2", color=color.green, linewidth=1)
+plot(useDailyPivots ? r3 : na, title="R3", color=color.green, linewidth=1)
+plot(useDailyPivots ? s1 : na, title="S1", color=color.red, linewidth=1)
+plot(useDailyPivots ? s2 : na, title="S2", color=color.red, linewidth=1)
+plot(useDailyPivots ? s3 : na, title="S3", color=color.red, linewidth=1)
+
+// Add labels if enabled
+if showLabels and useDailyPivots and barstate.islast
+    label.new(bar_index, pivot, "P", color=color.blue, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, r1, "R1", color=color.green, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, r2, "R2", color=color.green, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, r3, "R3", color=color.green, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, s1, "S1", color=color.red, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, s2, "S2", color=color.red, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+    label.new(bar_index, s3, "S3", color=color.red, textcolor=color.white, style=label.style_label_center, yloc=yloc.price)
+
+// Track breakouts and retests
+var bool pivotBrokenUp = false
+var bool r1BrokenUp = false
+var bool r2BrokenUp = false
+var bool r3BrokenUp = false
+var bool pivotBrokenDown = false
+var bool s1BrokenDown = false
+var bool s2BrokenDown = false
+var bool s3BrokenDown = false
+
+// Check for initial breaks
+pivotBrokenUp := high > pivot or pivotBrokenUp
+r1BrokenUp := high > r1 or r1BrokenUp
+r2BrokenUp := high > r2 or r2BrokenUp
+r3BrokenUp := high > r3 or r3BrokenUp
+
+pivotBrokenDown := low < pivot or pivotBrokenDown
+s1BrokenDown := low < s1 or s1BrokenDown
+s2BrokenDown := low < s2 or s2BrokenDown
+s3BrokenDown := low < s3 or s3BrokenDown
+
+// Check for retests and re-breaks (long conditions)
+longPivot = pivotBrokenUp and low <= pivot and close > pivot
+longR1 = r1BrokenUp and low <= r1 and close > r1
+longR2 = r2BrokenUp and low <= r2 and close > r2
+longR3 = r3BrokenUp and low <= r3 and close > r3
+
+// Check for retests and re-breaks (short conditions)
+shortPivot = pivotBrokenDown and high >= pivot and close < pivot
+shortS1 = s1BrokenDown and high >= s1 and close < s1
+shortS2 = s2BrokenDown and high >= s2 and close < s2
+shortS3 = s3BrokenDown and high >= s3 and close < s3
+
+// Determine targets and stop losses
+var float longEntryPrice = na
+var float longTarget = na
+var float longStop = na
+var float shortEntryPrice = na
+var float shortTarget = na
+var float shortStop = na
+
+if longPivot
+    longEntryPrice := close
+    longTarget := r1 * 0.99
+    longStop := close - (r1 - close) / riskRewardRatio
+else if longR1
+    longEntryPrice := close
+    longTarget := r2 * 0.99
+    longStop := close - (r2 - close) / riskRewardRatio
+else if longR2
+    longEntryPrice := close
+    longTarget := r3 * 0.99
+    longStop := close - (r3 - close) / riskRewardRatio
+else if longR3
+    longEntryPrice := close
+    longTarget := r3 + (r3 - r2) // Extension beyond R3
+    longStop := close - (longTarget - close) / riskRewardRatio
+
+if shortPivot
+    shortEntryPrice := close
+    shortTarget := s1 * 1.01
+    shortStop := close + (close - s1) / riskRewardRatio
+else if shortS1
+    shortEntryPrice := close
+    shortTarget := s2 * 1.01
+    shortStop := close + (close - s2) / riskRewardRatio
+else if shortS2
+    shortEntryPrice := close
+    shortTarget := s3 * 1.01
+    shortStop := close + (close - s3) / riskRewardRatio
+else if shortS3
+    shortEntryPrice := close
+    shortTarget := s3 - (s2 - s3) // Extension beyond S3
+    shortStop := close + (close - shortTarget) / riskRewardRatio
+
+// Execute trades
+if (longPivot or longR1 or longR2 or longR3) and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", limit=longTarget, stop=longStop)
+    
+if (shortPivot or shortS1 or shortS2 or shortS3) and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", limit=shortTarget, stop=shortStop)
+
+// Plot entry markers
+plotshape(longPivot or longR1 or longR2 or longR3, title="Long Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(shortPivot or shortS1 or shortS2 or shortS3, title="Short Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// Reset flags at session close
+if time("D") != time("D")[1]
+    pivotBrokenUp := false
+    r1BrokenUp := false
+    r2BrokenUp := false
+    r3BrokenUp := false
+    pivotBrokenDown := false
+    s1BrokenDown := false
+    s2BrokenDown := false
+    s3BrokenDown := false
